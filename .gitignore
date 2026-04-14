@@ -1,0 +1,13 @@
+# Arquivos de configuração e chaves de API
+.env
+
+# Arquivos de cache do Python
+__pycache__/
+
+# Diretórios de mídia e arquivos temporários
+temp/
+input_videos/
+output_videos/
+
+# Arquivo de contexto do projeto (opcional, mantido conforme original)
+context.txt
