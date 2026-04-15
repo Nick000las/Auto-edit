@@ -1,20 +1,30 @@
 import os
 from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
+def inicializar_cliente_groq():
+    """
+    Inicializa e retorna o cliente para a API da Groq, verificando a chave de API.
+    Levanta um ValueError se a chave não for encontrada.
+    """
+    # Altera a variável de ambiente para a chave da Groq
+    api_key = os.getenv("GROQ_WHISPER_API")
+    if not api_key:
+        raise ValueError("A chave de API GROK_WHISPER_API não foi encontrada. Verifique seu arquivo .env.")
+    # Adiciona a base_url para apontar para a API da Groq
+    return OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1"
+    )
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = inicializar_cliente_groq()
 
 def transcrever_com_whisper(caminho_audio):
-
-    print(f"Enviando '{caminho_audio}' para a OpenAI...")
+    print(f"Enviando '{caminho_audio}' para a Groq API...")
     
-    #arquivo não pode passar de 25MB na API da OpenAI.
     with open(caminho_audio, "rb") as arquivo_audio:
-        
         resposta = client.audio.transcriptions.create(
-            model="whisper-1",
+            # Altera o modelo para o que é usado pela Groq
+            model="whisper-large-v3",
             file=arquivo_audio,
             response_format="verbose_json",       # Necessário para receber tempos
             timestamp_granularities=["segment"]   # Divide o texto em blocos de fala
@@ -25,7 +35,7 @@ def transcrever_com_whisper(caminho_audio):
 
 if __name__ == "__main__":
 
-    caminho_teste = "temp/audio_extraido.mp3" 
+    caminho_teste = "temp/IMG_2252.mp3" 
     
     try:
         # Verifica se o arquivo existe para não dar erro
@@ -46,4 +56,4 @@ if __name__ == "__main__":
                 print(f"[{inicio:05.2f} - {fim:05.2f}] {texto}")
                 
     except Exception as erro:
-        print(f"Erro na API da OpenAI: {erro}")
+        print(f"Erro na API da Groq: {erro}")

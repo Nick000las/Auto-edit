@@ -1,6 +1,9 @@
 # Arquivos de configuração e chaves de API
 .env
 
+# Ambiente virtual do Python
+.venv/
+
 # Arquivos de cache do Python
 __pycache__/
 
