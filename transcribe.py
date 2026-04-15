@@ -27,7 +27,9 @@ def transcrever_com_whisper(caminho_audio):
             model="whisper-large-v3",
             file=arquivo_audio,
             response_format="verbose_json",       # Necessário para receber tempos
-            timestamp_granularities=["segment"]   # Divide o texto em blocos de fala
+            timestamp_granularities=["segment"],  # Divide o texto em blocos de fala
+            temperature=0.0,                      # Força o modelo a ser determinístico
+            prompt="Este é um vídeo em português. Evite repetições." # Contexto para ancorar o modelo
         )
         
     return resposta

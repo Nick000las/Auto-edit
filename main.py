@@ -68,6 +68,8 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
     # Garante que os diretórios temporário e de saída existem
     os.makedirs("temp", exist_ok=True)
     os.makedirs("output_videos", exist_ok=True)
+    os.makedirs("input_videos", exist_ok=True)
+
     
     nome_arquivo = os.path.basename(filepath)
     nome_base, extensao = os.path.splitext(nome_arquivo)

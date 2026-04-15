@@ -1,0 +1,41 @@
+================================================================================
+          AI VIDEO AUTOMATOR: PIPELINE DE EDIÇÃO INTELIGENTE COM IA
+================================================================================
+
+OBJETIVO DO SISTEMA:
+Automatizar integralmente a edição de vídeos brutos, transformando gravações
+extensas em conteúdos dinâmicos, sem silêncios e sem falas irrelevantes.
+
+--------------------------------------------------------------------------------
+STACK TECNOLÓGICA:
+--------------------------------------------------------------------------------
+- Linguagem: Python
+- Processamento de Mídia: FFmpeg (Cortes precisos e Hardcoding de legendas)
+- Transcrição: OpenAI Whisper via Groq (Velocidade ultra-rápida)
+- Inteligência Semântica: LLM Qwen-32B (Identificação de trechos úteis)
+- Automação: Watchdog (Monitoramento de diretórios em tempo real)
+
+--------------------------------------------------------------------------------
+FLUXO DO PIPELINE (PASSO A PASSO):
+--------------------------------------------------------------------------------
+1. MONITORAMENTO: O sistema detecta novos arquivos na pasta de entrada.
+2. EXTRAÇÃO: O áudio é isolado para otimizar o processamento.
+3. TRANSCRIÇÃO: O Whisper gera o texto com timestamps granulares por segmento.
+4. FILTRO DE IA: Um modelo de linguagem analisa o texto e decide quais trechos
+   são relevantes, eliminando erros de fala, gaguejos e vícios de linguagem.
+5. DETECÇÃO DE SILÊNCIO: O FFmpeg identifica zonas mortas de áudio em nível de dB.
+6. INTERSEÇÃO LÓGICA: O sistema cruza os dados da IA com a detecção de silêncio
+   para gerar um mapa de corte final milimétrico.
+7. EDIÇÃO NÃO-LINEAR: O vídeo original é re-encodado e concatenado nos pontos
+   exatos de interesse, eliminando o "congelamento" de frames.
+8. LEGENDA SINCRONIZADA: Os tempos da transcrição original são recalculados 
+   matematicamente para a nova linha do tempo do vídeo editado.
+9. FINALIZAÇÃO: As legendas são embutidas (Hardcode) no vídeo final.
+
+--------------------------------------------------------------------------------
+DIFERENCIAIS:
+- Processamento assíncrono e modular.
+- Redução drástica no tempo de edição manual.
+- Sincronia perfeita entre corte de vídeo e exibição de legendas.
+================================================================================
+"""

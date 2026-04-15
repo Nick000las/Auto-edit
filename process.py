@@ -2,6 +2,7 @@ import os
 from openai import OpenAI
 import json
 import re
+import subprocess
 
 from utils import run_ffmpeg_command
 
@@ -33,10 +34,13 @@ def refinar_transcricao_com_ia(segmentos_transcricao: list[dict]) -> list[dict] 
         mensagens = [
             {
                 "role": "system",
-                "content": """Você é um editor de vídeo experiente. Sua tarefa é analisar a transcrição de um vídeo, que inclui timestamps [inicio - fim] em segundos.
-Identifique e selecione APENAS os segmentos que contêm conteúdo principal e útil. Ignore hesitações, vícios de linguagem, repetições e frases de preenchimento.
-Sua resposta deve ser APENAS uma lista JSON de objetos. Cada objeto deve ter as chaves "start" e "end", representando os timestamps exatos dos segmentos que DEVEM SER MANTIDOS.
-Exemplo de saída: [{"start": 10.5, "end": 15.2}, {"start": 18.0, "end": 25.5}]"""
+                "content": """Você é um editor de vídeo. Analise a transcrição e retorne um JSON com os timestamps dos segmentos úteis.
+REGRAS:
+1. EXCLUA: Gaguejos, repetições, vícios de linguagem ('né', 'tipo', 'hum'), pausas e hesitações.
+2. EXCLUA: Conversas sobre a gravação ('tá valendo', 'testando som', 'gravando'). Mantenha apenas o conteúdo principal do tema.
+3. SEJA RIGOROSO: Priorize a concisão.
+4. FORMATO: Sua resposta deve ser APENAS uma lista JSON de objetos com "start" e "end".
+Exemplo: [{"start": 10.5, "end": 15.2}]"""
             },
             {
                 "role": "user",
@@ -65,23 +69,28 @@ Exemplo de saída: [{"start": 10.5, "end": 15.2}, {"start": 18.0, "end": 25.5}]"
         print(f"Erro ao analisar transcrição com IA: {e}")
         return None
 
-def detect_silences(video_path: str, ffmpeg_path: str) -> list[dict]:
+def detect_silences(video_path: str, ffmpeg_path: str, silence_thresh_db: int = -60, silence_duration: float = 2.0) -> list[dict]:
     """
     Detecta segmentos silenciosos em um vídeo usando o filtro silencedetect do FFmpeg.
+    
     Args:
         video_path (str): Caminho para o arquivo de vídeo.
+        ffmpeg_path (str): Caminho para o executável do FFmpeg.
+        silence_thresh_db (int): O limite de ruído em dB. Níveis abaixo disso são considerados silêncio.
+                                 O padrão é -60.
+        silence_duration (float): A duração mínima em segundos que o silêncio deve ter para ser detectado.
+                                  O padrão é 1.5.
+
     Returns:
         list[dict]: Uma lista de dicionários, cada um com chaves 'start' e 'end'
                     representando intervalos silenciosos em segundos.
     """
-    print(f"[FFMPEG] Detectando silêncios em '{video_path}'...")
-    # Usa -vn para processar apenas áudio, -af para filtro de áudio
-    # silencedetect=n=-50dB:d=1s -> threshold de ruído -50dB, duração mínima de 1 segundo
+    print(f"[FFMPEG] Detectando silêncios em '{video_path}' (limite: {silence_thresh_db}dB, duração: {silence_duration}s)...")
     cmd = [
         ffmpeg_path,
         '-i', video_path,
         '-map', '0:a:0', # Seleciona apenas o primeiro stream de áudio
-        '-af', 'silencedetect=n=-50dB:d=1', # Ajuste o ruído (n) e a duração (d) conforme necessário
+        '-af', f'silencedetect=n={silence_thresh_db}dB:d={silence_duration}',
         '-f', 'null',
         '-' # Saída para stdout (mas FFmpeg imprime logs para stderr)
     ]
@@ -146,46 +155,72 @@ def generate_non_silent_segments(duration: float, silences: list[dict]) -> list[
     print(f"Segmentos não-silenciosos gerados: {non_silent_segments}")
     return non_silent_segments
 
+
 def merge_segments(segments1: list[dict], segments2: list[dict]) -> list[dict]:
     """
-    Encontra a interseção entre duas listas de segmentos de tempo.
+    Encontra a interseção entre duas listas de segmentos de tempo e, em seguida,
+    consolida quaisquer segmentos resultantes que estejam sobrepostos ou contíguos.
 
-    Esta função recebe duas listas de segmentos (ex: segmentos úteis da IA e
-    segmentos não-silenciosos do FFmpeg) e retorna uma nova lista contendo
-    apenas os intervalos de tempo que existem em *ambas* as listas.
+    Esta função é crucial para garantir que os intervalos de tempo enviados ao FFmpeg
+    sejam precisos, não sobrepostos e representem a união de todos os trechos válidos.
 
     Args:
-        segments1 (list[dict]): A primeira lista de segmentos. Ex: [{"start": 0.5, "end": 2.8}]
-        segments2 (list[dict]): A segunda lista de segmentos. Ex: [{"start": 1.0, "end": 3.0}]
+        segments1 (list[dict]): A primeira lista de segmentos (ex: úteis da IA).
+                                Formato: [{"start": float, "end": float}].
+        segments2 (list[dict]): A segunda lista de segmentos (ex: não-silenciosos do FFmpeg).
+                                Formato: [{"start": float, "end": float}].
 
     Returns:
-        list[dict]: Uma lista de segmentos representando a interseção.
-                    Ex: [{"start": 1.0, "end": 2.8}]
+        list[dict]: Uma lista consolidada de segmentos representando a interseção
+                    e a subsequente mesclagem de intervalos sobrepostos/contíguos.
+                    Ex: [{"start": 1.0, "end": 2.8}] ou [{"start": 1.0, "end": 8.0}].
     """
-    merged = []
-    i, j = 0, 0
-
-    # Garante que ambas as listas estão ordenadas pelo tempo de início
+    # 1. Garante que ambas as listas estão ordenadas pelo tempo de início
     segments1.sort(key=lambda x: x['start'])
     segments2.sort(key=lambda x: x['start'])
 
+    intersections = []
+    i, j = 0, 0
+
+    # 2. Primeira passagem: Encontrar todas as interseções entre segments1 e segments2
     while i < len(segments1) and j < len(segments2):
         s1 = segments1[i]
         s2 = segments2[j]
 
-        # Calcula a sobreposição (interseção) entre os dois segmentos atuais
+        # Calcula o início e o fim da sobreposição (interseção)
         overlap_start = max(s1['start'], s2['start'])
         overlap_end = min(s1['end'], s2['end'])
 
-        # Se houver uma sobreposição válida (início < fim), adiciona à lista
+        # Se houver uma sobreposição válida (início < fim), adiciona à lista de interseções
         if overlap_start < overlap_end:
-            merged.append({"start": overlap_start, "end": overlap_end})
+            intersections.append({"start": overlap_start, "end": overlap_end})
 
-        # Avança o ponteiro do segmento que termina primeiro
+        # Avança o ponteiro do segmento que termina primeiro para encontrar a próxima possível interseção
         if s1['end'] < s2['end']:
             i += 1
         else:
             j += 1
             
-    print(f"Segmentos mesclados (interseção): {merged}")
-    return merged
+    # Se não houver interseções, retorna uma lista vazia
+    if not intersections:
+        print("Nenhuma interseção encontrada entre os segmentos.")
+        return []
+
+    # 3. Segunda passagem: Consolidar segmentos sobrepostos ou contíguos
+    # As interseções já estão ordenadas por 'start' devido à lógica de dois ponteiros.
+    consolidated_segments = [intersections[0]]
+
+    for current_segment in intersections[1:]:
+        last_merged_segment = consolidated_segments[-1]
+
+        # Verifica se o segmento atual se sobrepõe ou é contíguo ao último segmento mesclado
+        # Usamos <= para incluir segmentos contíguos (ex: [1,2] e [2,3] -> [1,3])
+        if current_segment['start'] <= last_merged_segment['end']:
+            # Mescla os segmentos, estendendo o 'end' do último segmento mesclado
+            last_merged_segment['end'] = max(last_merged_segment['end'], current_segment['end'])
+        else:
+            # Se não houver sobreposição/contiguidade, adiciona o segmento atual como um novo segmento mesclado
+            consolidated_segments.append(current_segment)
+            
+    print(f"Segmentos mesclados e consolidados: {consolidated_segments}")
+    return consolidated_segments

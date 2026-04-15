@@ -43,10 +43,15 @@ def cortar_e_concatenar(caminho_video_original: str, segmentos_finais: list[dict
 
             cmd_corte = [
                 ffmpeg_path,
+                # -ss e -to antes de -i para um corte mais rápido, mas pode ser impreciso.
+                # Para cortes precisos, coloque-os depois de -i.
                 '-i', caminho_video_original,
                 '-ss', str(start_time),
                 '-to', str(end_time),
-                '-c', 'copy',  # Copia os streams sem re-codificar para máxima velocidade e qualidade
+                '-c:v', 'libx264', # Re-codifica o vídeo para permitir cortes precisos
+                '-threads', '2', # Limita o uso de threads para evitar sobrecarga da CPU
+                '-preset', 'ultrafast', # Prioriza a velocidade de codificação
+                '-c:a', 'aac',          # Re-codifica o áudio para o formato AAC
                 '-y',
                 caminho_clip_temp
             ]
