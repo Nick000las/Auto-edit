@@ -34,13 +34,14 @@ def refinar_transcricao_com_ia(segmentos_transcricao: list[dict]) -> list[dict] 
         mensagens = [
             {
                 "role": "system",
-                "content": """Você é um editor de vídeo. Analise a transcrição e retorne um JSON com os timestamps dos segmentos úteis.
+                "content": """Você é um editor de vídeo. Analise a transcrição e retorne um JSON com os segmentos úteis, incluindo o texto corrigido.
 REGRAS:
 1. EXCLUA: Gaguejos, repetições, vícios de linguagem ('né', 'tipo', 'hum'), pausas e hesitações.
 2. EXCLUA: Conversas sobre a gravação ('tá valendo', 'testando som', 'gravando'). Mantenha apenas o conteúdo principal do tema.
 3. SEJA RIGOROSO: Priorize a concisão.
-4. FORMATO: Sua resposta deve ser APENAS uma lista JSON de objetos com "start" e "end".
-Exemplo: [{"start": 10.5, "end": 15.2}]"""
+4. FORMATO: Sua resposta deve ser APENAS uma lista JSON de objetos com "start", "end" e "text".
+5. CORREÇÃO ORTOGRÁFICA: Atenção extrema: O texto possui um bug onde palavras são decepadas na sílaba acentuada (ex: 'Ent' = Então, 'n' = não, 'pre' = preço, 'car' = caráter). Você DEVE identificar esses tocos de palavras pelo contexto e RECONSTRUIR a palavra inteira na sua resposta. Não omita palavras cortadas.
+Exemplo: [{"start": 10.5, "end": 15.2, "text": "Porque caráter é uma coisa que não tem preço."}]"""
             },
             {
                 "role": "user",
@@ -69,7 +70,7 @@ Exemplo: [{"start": 10.5, "end": 15.2}]"""
         print(f"Erro ao analisar transcrição com IA: {e}")
         return None
 
-def detect_silences(video_path: str, ffmpeg_path: str, silence_thresh_db: int = -35, silence_duration: float = 1.0) -> list[dict]:
+def detect_silences(video_path: str, ffmpeg_path: str, silence_thresh_db: int = -35, silence_duration: float = 2.0) -> list[dict]:
     """
     Detecta segmentos silenciosos em um vídeo usando o filtro silencedetect do FFmpeg.
     

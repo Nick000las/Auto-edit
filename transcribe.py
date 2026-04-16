@@ -27,9 +27,10 @@ def transcrever_com_whisper(caminho_audio):
             model="whisper-large-v3",
             file=arquivo_audio,
             response_format="verbose_json",       # Necessário para receber tempos
+            language='pt',                        # Força o modelo a usar a rede neural em português
             timestamp_granularities=["segment"],  # Divide o texto em blocos de fala
             temperature=0.0,                      # Força o modelo a ser determinístico
-            prompt="Este é um vídeo em português. Evite repetições." # Contexto para ancorar o modelo
+            prompt="Este é um vídeo em português do Brasil. Transcreva as palavras completas, sem abreviações. Exemplo: não, preço, caráter, inteligência." # Contexto para ancorar o modelo
         )
         
     return resposta

@@ -141,7 +141,7 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
 
         # Etapa 7: Geração de Legendas (.srt)
         subtitles.gerar_srt(
-            transcricao_original=segmentos_whisper,
+            transcricao_original=segmentos_uteis, # Usa o texto corrigido pela IA
             segmentos_finais=segmentos_finais_para_corte,
             caminho_srt=caminho_srt_temp
         )
