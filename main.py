@@ -77,7 +77,7 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
     # Define os caminhos dos arquivos temporários e finais
     caminho_audio_temp = os.path.join("temp", f"{nome_base}.mp3")
     caminho_video_editado_temp = os.path.join("temp", f"{nome_base}_editado.mp4")
-    caminho_srt_temp = os.path.join("temp", f"{nome_base}.srt")
+    caminho_ass_temp = os.path.join("temp", f"{nome_base}.ass")
     caminho_video_final_output = os.path.join("output_videos", f"{nome_base}_final.mp4")
 
     # Etapa 0: Obter duração total do vídeo
@@ -139,17 +139,17 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
             print("[ERRO] Falha na etapa de edição do vídeo. Abortando.")
             return
 
-        # Etapa 7: Geração de Legendas (.srt)
-        subtitles.gerar_srt(
-            transcricao_original=segmentos_uteis, # Usa o texto corrigido pela IA
+        # Etapa 7: Geração de Legendas (.ass)
+        subtitles.gerar_ass(
+            transcricao_original=transcricao.segments, # Usa a transcrição original para ter o texto completo
             segmentos_finais=segmentos_finais_para_corte,
-            caminho_srt=caminho_srt_temp
+            caminho_ass=caminho_ass_temp
         )
 
         # Etapa 8: Embutir Legendas no Vídeo (Hardcode)
         subtitles.embutir_legendas(
             caminho_video_temp=caminho_video_editado_temp,
-            caminho_srt=caminho_srt_temp,
+            caminho_ass=caminho_ass_temp,
             caminho_video_final=caminho_video_final_output,
             ffmpeg_path=ffmpeg_path
         )
@@ -159,7 +159,7 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
     finally:
         # Etapa 9: Limpeza de arquivos temporários
         print("[LIMPEZA] Removendo arquivos temporários...")
-        arquivos_para_limpar = [caminho_audio_temp, caminho_video_editado_temp, caminho_srt_temp]
+        arquivos_para_limpar = [caminho_audio_temp, caminho_video_editado_temp, caminho_ass_temp]
         for arquivo in arquivos_para_limpar:
             try:
                 if os.path.exists(arquivo):
