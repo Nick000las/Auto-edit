@@ -60,7 +60,7 @@ Exemplo: [{"start": 10.5, "end": 15.2}]"""
 
         resposta_json_str = completion.choices[0].message.content
         print(f"[IA] Resposta JSON recebida: {resposta_json_str}")
-
+        
         # Faz o parse da string JSON para um objeto Python
         segmentos_uteis = json.loads(resposta_json_str)
         return segmentos_uteis
@@ -69,7 +69,7 @@ Exemplo: [{"start": 10.5, "end": 15.2}]"""
         print(f"Erro ao analisar transcrição com IA: {e}")
         return None
 
-def detect_silences(video_path: str, ffmpeg_path: str, silence_thresh_db: int = -60, silence_duration: float = 2.0) -> list[dict]:
+def detect_silences(video_path: str, ffmpeg_path: str, silence_thresh_db: int = -35, silence_duration: float = 1.0) -> list[dict]:
     """
     Detecta segmentos silenciosos em um vídeo usando o filtro silencedetect do FFmpeg.
     
@@ -85,7 +85,8 @@ def detect_silences(video_path: str, ffmpeg_path: str, silence_thresh_db: int = 
         list[dict]: Uma lista de dicionários, cada um com chaves 'start' e 'end'
                     representando intervalos silenciosos em segundos.
     """
-    print(f"[FFMPEG] Detectando silêncios em '{video_path}' (limite: {silence_thresh_db}dB, duração: {silence_duration}s)...")
+    print(f"\n[FFMPEG] Analisando áudio para cortes...")
+    print(f"[FFMPEG] Parâmetros: Volume menor que {silence_thresh_db}dB por mais de {silence_duration}s")
     cmd = [
         ffmpeg_path,
         '-i', video_path,
@@ -98,7 +99,7 @@ def detect_silences(video_path: str, ffmpeg_path: str, silence_thresh_db: int = 
         result = run_ffmpeg_command(cmd, capture_output=True, text=True)
         silences = []
         
-        # Padrões Regex para encontrar silence_start e silence_end
+        # Padrões Regex para encontrar silence_start e silence_end nos logs do FFmpeg
         start_pattern = re.compile(r'silence_start: (\d+\.?\d*)')
         end_pattern = re.compile(r'silence_end: (\d+\.?\d*)')
 
@@ -115,11 +116,14 @@ def detect_silences(video_path: str, ffmpeg_path: str, silence_thresh_db: int = 
                 silence_end = float(end_match.group(1))
                 silences.append({"start": current_silence_start, "end": silence_end})
                 current_silence_start = None # Reset para o próximo silêncio
-        
-        print(f"Silêncios detectados: {silences}")
+
+        # LOG DE DEBUG ESSENCIAL: Mostra quantos silêncios reais o FFmpeg achou
+        print(f"[FFMPEG] Resultado: {len(silences)} blocos de silêncio detectados!")
+        if len(silences) == 0:
+            print("[AVISO] Nenhum silêncio encontrado. O volume de corte (-35dB) pode estar muito baixo para o ruído deste vídeo, ou não há pausas longas.")
         return silences
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(f"Falha ao detectar silêncios em '{video_path}'. Retornando lista vazia.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[ERRO] Falha ao detectar silêncios em '{video_path}': {e}")
         return []
 
 def generate_non_silent_segments(duration: float, silences: list[dict]) -> list[dict]:
@@ -156,7 +160,7 @@ def generate_non_silent_segments(duration: float, silences: list[dict]) -> list[
     return non_silent_segments
 
 
-def merge_segments(segments1: list[dict], segments2: list[dict]) -> list[dict]:
+def merge_segments(segments1: list[dict], segments2: list[dict], tolerance: float = 1) -> list[dict]:
     """
     Encontra a interseção entre duas listas de segmentos de tempo e, em seguida,
     consolida quaisquer segmentos resultantes que estejam sobrepostos ou contíguos.
@@ -169,6 +173,8 @@ def merge_segments(segments1: list[dict], segments2: list[dict]) -> list[dict]:
                                 Formato: [{"start": float, "end": float}].
         segments2 (list[dict]): A segunda lista de segmentos (ex: não-silenciosos do FFmpeg).
                                 Formato: [{"start": float, "end": float}].
+        tolerance (float): A lacuna máxima em segundos entre dois segmentos para que
+                           eles sejam considerados contíguos e mesclados. Padrão 0.4s.
 
     Returns:
         list[dict]: Uma lista consolidada de segmentos representando a interseção
@@ -214,8 +220,8 @@ def merge_segments(segments1: list[dict], segments2: list[dict]) -> list[dict]:
         last_merged_segment = consolidated_segments[-1]
 
         # Verifica se o segmento atual se sobrepõe ou é contíguo ao último segmento mesclado
-        # Usamos <= para incluir segmentos contíguos (ex: [1,2] e [2,3] -> [1,3])
-        if current_segment['start'] <= last_merged_segment['end']:
+        # A tolerância permite mesclar segmentos com pequenas lacunas entre eles (ex: [1, 2] e [2.1, 3] com tol=0.2 -> [1, 3])
+        if current_segment['start'] <= last_merged_segment['end'] + tolerance:
             # Mescla os segmentos, estendendo o 'end' do último segmento mesclado
             last_merged_segment['end'] = max(last_merged_segment['end'], current_segment['end'])
         else:
