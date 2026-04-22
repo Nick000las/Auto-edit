@@ -98,36 +98,74 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
         # Etapa 2: Transcrição com Whisper
         transcricao = transcribe.transcrever_com_whisper(caminho_audio_temp)
         
-        # Prepara os segmentos para a próxima etapa
-        segmentos_whisper = [
-            {"start": seg.start, "end": seg.end, "text": seg.text.strip()}
-            for seg in transcricao.segments
+        # Verificação de segurança: Se a transcrição falhar, interrompe o processo para este vídeo.
+        if transcricao is None:
+            print("[ERRO] A etapa de transcrição falhou. Abortando o processamento deste vídeo.")
+            return
+
+        # Verificação de robustez: Garante que a resposta da API contém os dados esperados.
+        if not hasattr(transcricao, 'segments') or not hasattr(transcricao, 'words'):
+            print("[ERRO] A resposta da API de transcrição não continha a estrutura esperada (segments/words). Abortando.")
+            print(f"   Resposta recebida: {transcricao}")
+            return
+
+        # Prepara os dados da transcrição para a IA.
+        # Se a API não retornar segmentos, cria um único segmento com o texto completo.
+        if transcricao.segments:
+            segmentos_whisper = [
+                {"start": seg.start, "end": seg.end, "text": seg.text.strip()}
+                for seg in transcricao.segments
+            ]
+        else:
+            print("[AVISO] A API não retornou segmentos. Criando um segmento único com o texto completo para análise da IA.")
+            segmentos_whisper = [{
+                "start": 0, "end": transcricao.duration, "text": transcricao.text
+            }]
+        palavras_transcritas = [
+            {"word": p.word, "start": p.start, "end": p.end}
+            for p in transcricao.words
         ]
         
-        print("\n--- TRANSCRIÇÃO BRUTA RECEBIDA ---")
-        for seg in segmentos_whisper:
-            print(f"[{seg['start']:05.2f} - {seg['end']:05.2f}] {seg['text']}")
+        print(f"\n--- TRANSCRIÇÃO BRUTA RECEBIDA ---\n\"{transcricao.text}\"")
 
         # Etapa 3: Análise Semântica com IA para identificar trechos úteis
-        segmentos_uteis = process.refinar_transcricao_com_ia(segmentos_whisper)
+        texto_limpo_ia = process.refinar_transcricao_com_ia(transcricao.text)
         
-        print("\n--- SEGMENTOS ÚTEIS (IA) ---")
-        print(segmentos_uteis)
+        # Verificação de segurança: Se a IA falhar, interrompe o processo para este vídeo.
+        if texto_limpo_ia is None:
+            print("[ERRO] A análise da IA falhou ou retornou uma resposta vazia. Abortando o processamento deste vídeo.")
+            return
 
-        # Etapa 4: Detecção e remoção de silêncios
+        # Etapa 3.5: Alinhar texto limpo com palavras originais para obter timestamps
+        intervalos_permitidos_ia = process.alinhar_texto_com_palavras(texto_limpo_ia, palavras_transcritas)
+        print(f"\n--- INTERVALOS PERMITIDOS (IA - Pós-Alinhamento) ---")
+        print(intervalos_permitidos_ia)
+
+        # Etapa 4: Filtragem de Palavras
+        # Apenas as palavras que estão dentro dos intervalos aprovados pela IA serão usadas
+        palavras_filtradas = process.filtrar_palavras_por_intervalos(palavras_transcritas, intervalos_permitidos_ia)
+        print(f"\n--- PALAVRAS FILTRADAS ({len(palavras_filtradas)} de {len(palavras_transcritas)}) ---")
+
+        # Etapa 5: Detecção e remoção de silêncios
         silencios_detectados = process.detect_silences(filepath, ffmpeg_path)
         segmentos_nao_silenciosos = process.generate_non_silent_segments(video_duration, silencios_detectados)
         
         print("\n--- SEGMENTOS NÃO-SILENCIOSOS ---")
         print(segmentos_nao_silenciosos)
 
-        # Etapa 5: Mapeamento de Cortes (Interseção)
-        segmentos_finais_para_corte = process.merge_segments(segmentos_uteis, segmentos_nao_silenciosos)
+        # Etapa 6: Mapeamento de Cortes (Interseção)
+        # Cruza os intervalos permitidos pela IA com os intervalos não-silenciosos
+        segmentos_finais_para_corte = process.merge_segments(intervalos_permitidos_ia, segmentos_nao_silenciosos)
         
         print("\n--- SEGMENTOS FINAIS PARA CORTE (IA + Não-Silêncio) ---")
         print(segmentos_finais_para_corte)
 
-        # Etapa 6: Edição e Concatenação (gera vídeo temporário)
+        # Verificação de segurança: Se não houver segmentos válidos após o merge, não há o que editar.
+        if not segmentos_finais_para_corte:
+            print("[AVISO] Nenhum segmento válido encontrado para edição após cruzar dados da IA e silêncio. Abortando.")
+            return
+
+        # Etapa 7: Edição e Concatenação (gera vídeo temporário)
         sucesso_edicao = video_editor.cortar_e_concatenar(
             caminho_video_original=filepath,
             segmentos_finais=segmentos_finais_para_corte,
@@ -139,14 +177,14 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
             print("[ERRO] Falha na etapa de edição do vídeo. Abortando.")
             return
 
-        # Etapa 7: Geração de Legendas (.ass)
+        # Etapa 8: Geração de Legendas (.ass)
         subtitles.gerar_ass(
-            transcricao_original=transcricao.segments, # Usa a transcrição original para ter o texto completo
+            lista_palavras_transcritas=palavras_filtradas, # Usa as palavras já filtradas pela IA
             segmentos_finais=segmentos_finais_para_corte,
             caminho_ass=caminho_ass_temp
         )
 
-        # Etapa 8: Embutir Legendas no Vídeo (Hardcode)
+        # Etapa 9: Embutir Legendas no Vídeo (Hardcode)
         subtitles.embutir_legendas(
             caminho_video_temp=caminho_video_editado_temp,
             caminho_ass=caminho_ass_temp,
@@ -157,7 +195,7 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
     except Exception as e:
         print(f"Ocorreu um erro inesperado ao processar {filepath}: {e}")
     finally:
-        # Etapa 9: Limpeza de arquivos temporários
+        # Etapa 10: Limpeza de arquivos temporários
         print("[LIMPEZA] Removendo arquivos temporários...")
         arquivos_para_limpar = [caminho_audio_temp, caminho_video_editado_temp, caminho_ass_temp]
         for arquivo in arquivos_para_limpar:

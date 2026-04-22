@@ -21,19 +21,24 @@ client = inicializar_cliente_groq()
 def transcrever_com_whisper(caminho_audio):
     print(f"Enviando '{caminho_audio}' para a Groq API...")
     
-    with open(caminho_audio, "rb") as arquivo_audio:
-        resposta = client.audio.transcriptions.create(
-            # Altera o modelo para o que é usado pela Groq
-            model="whisper-large-v3",
-            file=arquivo_audio,
-            response_format="verbose_json",       # Necessário para receber tempos
-            language='pt',                        # Força o modelo a usar a rede neural em português
-            timestamp_granularities=["segment"],  # Divide o texto em blocos de fala
-            temperature=0.0,                      # Força o modelo a ser determinístico
-            prompt="Este é um vídeo em português do Brasil. Transcreva as palavras completas, sem abreviações. Exemplo: não, preço, caráter, inteligência." # Contexto para ancorar o modelo
-        )
-        
-    return resposta
+    try:
+        with open(caminho_audio, "rb") as arquivo_audio:
+            resposta = client.audio.transcriptions.create(
+                # Altera o modelo para o que é usado pela Groq
+                model="whisper-large-v3",
+                file=arquivo_audio,
+                response_format="verbose_json",       # Necessário para receber tempos
+                language='pt',                        # Força o modelo a usar a rede neural em português
+                timestamp_granularities=["word"],     # Divide o texto em palavras com timestamps
+                temperature=0.0,                      # Força o modelo a ser determinístico
+                prompt="Este é um vídeo em português do Brasil. Transcreva as palavras completas, sem abreviações. Exemplo: não, preço, caráter, inteligência." # Contexto para ancorar o modelo
+            )
+            
+
+        return resposta
+    except Exception as e:
+        print(f"[ERRO NA TRANSCRIÇÃO] A chamada para a API da Groq falhou: {e}")
+        return None
 
 
 if __name__ == "__main__":
@@ -49,14 +54,16 @@ if __name__ == "__main__":
             
             print("\n--- RESULTADO COM TIMESTAMPS ---")
             
-            # 4. Extração dos dados úteis para o próximo passo (Análise de IA)
-            for segmento in transcricao.segments:
-                inicio = segmento.start
-                fim = segmento.end
-                texto = segmento.text.strip()
-                
-                # É este formato que você enviará para o LLM analisar depois
-                print(f"[{inicio:05.2f} - {fim:05.2f}] {texto}")
+            # Extração dos dados por palavra para verificação
+            if hasattr(transcricao, 'words'):
+                for palavra in transcricao.words:
+                    inicio = palavra.start
+                    fim = palavra.end
+                    texto = palavra.word
+                    print(f"[{inicio:05.2f} - {fim:05.2f}] {texto}")
+            else:
+                print("A resposta da API não continha timestamps por palavra. Verifique a resposta completa:")
+                print(transcricao)
                 
     except Exception as erro:
         print(f"Erro na API da Groq: {erro}")

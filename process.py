@@ -3,68 +3,61 @@ from openai import OpenAI
 import json
 import re
 import subprocess
+import string
+from typing import List, Dict
 
 from utils import run_ffmpeg_command
 
-def refinar_transcricao_com_ia(segmentos_transcricao: list[dict]) -> list[dict] | None:
+def refinar_transcricao_com_ia(texto_completo: str) -> str | None:
     """
-    Usa um modelo de IA via Groq para analisar os segmentos de transcrição e retornar
-    apenas os timestamps do conteúdo útil em formato JSON.
+    Usa um modelo de IA para "limpar" um texto de transcrição, removendo
+    gaguejos, hesitações e erros de gravação.
     """
     try:
-        # A chave de API é a mesma usada para a transcrição, conforme solicitado.
+        # A chave de API é a mesma usada para a transcrição, pois estamos usando a API da Groq.
         api_key = os.getenv("GROQ_WHISPER_API")
         if not api_key:
-            raise ValueError("A chave de API GROK_WHISPER_API não foi encontrada no arquivo .env")
+            raise ValueError("A chave de API GROQ_WHISPER_API não foi encontrada no arquivo .env")
 
         client = OpenAI(
             api_key=api_key,
             base_url="https://api.groq.com/openai/v1"
         )
 
-        print("\n[IA] Analisando transcrição com Qwen (via Groq) para identificar conteúdo útil...")
+        print("\n[IA] Enviando texto para limpeza (remoção de hesitações)...")
 
-        # Formata a transcrição para ser enviada ao modelo
-        transcricao_formatada = "\n".join(
-            f"[{seg['start']:.2f} - {seg['end']:.2f}] {seg['text']}" for seg in segmentos_transcricao
-        )
-
-        # O prompt foi ajustado para instruir o modelo a retornar um JSON,
-        # garantindo a compatibilidade com o resto do pipeline.
         mensagens = [
             {
                 "role": "system",
-                "content": """Você é um editor de vídeo. Analise a transcrição e retorne um JSON com os segmentos úteis, incluindo o texto corrigido.
-REGRAS:
-1. EXCLUA: Gaguejos, repetições, vícios de linguagem ('né', 'tipo', 'hum'), pausas e hesitações.
-2. EXCLUA: Conversas sobre a gravação ('tá valendo', 'testando som', 'gravando'). Mantenha apenas o conteúdo principal do tema.
-3. SEJA RIGOROSO: Priorize a concisão.
-4. FORMATO: Sua resposta deve ser APENAS uma lista JSON de objetos com "start", "end" e "text".
-5. CORREÇÃO ORTOGRÁFICA: Atenção extrema: O texto possui um bug onde palavras são decepadas na sílaba acentuada (ex: 'Ent' = Então, 'n' = não, 'pre' = preço, 'car' = caráter). Você DEVE identificar esses tocos de palavras pelo contexto e RECONSTRUIR a palavra inteira na sua resposta. Não omita palavras cortadas.
-Exemplo: [{"start": 10.5, "end": 15.2, "text": "Porque caráter é uma coisa que não tem preço."}]"""
+                "content": """Você é um 'Revisor de Texto de Transcrição'. Sua única função é revisar o texto fornecido e DELETAR trechos que sejam claramente gaguejos, hesitações, palavras repetidas por engano ou erros de gravação.
+                
+REGRA NÚMERO UM (INQUEBRÁVEL): NÃO altere, reescreva, corrija a gramática ou adicione NENHUMA palavra. Apenas delete.
+
+Exemplo:
+Texto de entrada: "Eu, uhm... eu acho que... que a gente pode, pode começar."
+Sua saída DEVE SER: "Eu acho que a gente pode começar."
+
+Retorne APENAS o texto limpo como uma string contínua."""
             },
             {
                 "role": "user",
-                "content": f"Analise esta transcrição e retorne o JSON com os trechos úteis:\n---\n{transcricao_formatada}\n---"
+                "content": texto_completo
             }
         ]
 
         completion = client.chat.completions.create(
-            model="qwen/qwen3-32b",
+            model="llama-3.3-70b-versatile",
             messages=mensagens,
-            temperature=0.2, # Temperatura baixa para respostas mais determinísticas e focadas no formato JSON
+            temperature=0.2,
             max_tokens=4096,
             top_p=1,
-            stream=False, # Stream desativado para receber a resposta JSON completa de uma vez
-            response_format={"type": "json_object"}, # Força a saída em JSON
+            stream=False,
         )
 
-        resposta_json_str = completion.choices[0].message.content
-        print(f"[IA] Resposta JSON recebida: {resposta_json_str}")
-        
-        # Faz o parse da string JSON para um objeto Python
-        segmentos_uteis = json.loads(resposta_json_str)
-        return segmentos_uteis
+        texto_limpo = completion.choices[0].message.content
+        print(f"[IA] Texto limpo recebido: \"{texto_limpo[:100]}...\"")
+
+        return texto_limpo
 
     except Exception as e:
         print(f"Erro ao analisar transcrição com IA: {e}")
@@ -213,6 +206,11 @@ def merge_segments(segments1: list[dict], segments2: list[dict], tolerance: floa
         print("Nenhuma interseção encontrada entre os segmentos.")
         return []
 
+    # Se não houver interseções, retorna uma lista vazia antes de tentar acessá-la
+    if not intersections:
+        print("Nenhuma interseção encontrada entre os segmentos.")
+        return []
+
     # 3. Segunda passagem: Consolidar segmentos sobrepostos ou contíguos
     # As interseções já estão ordenadas por 'start' devido à lógica de dois ponteiros.
     consolidated_segments = [intersections[0]]
@@ -231,3 +229,88 @@ def merge_segments(segments1: list[dict], segments2: list[dict], tolerance: floa
             
     print(f"Segmentos mesclados e consolidados: {consolidated_segments}")
     return consolidated_segments
+
+def filtrar_palavras_por_intervalos(palavras: List[Dict], intervalos_permitidos: List[Dict]) -> List[Dict]:
+    """
+    Filtra uma lista de palavras com timestamps, mantendo apenas aquelas que
+    se sobrepõem com os intervalos de tempo permitidos.
+
+    Args:
+        palavras (List[Dict]): Lista de palavras, cada uma com 'start' e 'end'.
+        intervalos_permitidos (List[Dict]): Lista de intervalos de tempo, cada um com 'start' e 'end'.
+
+    Returns:
+        List[Dict]: Uma nova lista contendo apenas as palavras filtradas.
+    """
+    palavras_filtradas = []
+    intervalos_permitidos.sort(key=lambda x: x['start'])
+
+    for palavra in palavras:
+        for intervalo in intervalos_permitidos:
+            # Verifica se há sobreposição entre a palavra e o intervalo
+            if palavra['start'] < intervalo['end'] and palavra['end'] > intervalo['start']:
+                palavras_filtradas.append(palavra)
+                break # Palavra já foi incluída, passa para a próxima
+    
+    return palavras_filtradas
+
+def alinhar_texto_com_palavras(texto_limpo: str, palavras_originais: List[Dict]) -> List[Dict]:
+    """
+    Alinha um texto limpo com a lista original de palavras para
+    gerar os intervalos de tempo correspondentes ao texto mantido,
+    ignorando pontuações perfeitamente.
+
+    Args:
+        texto_limpo (str): O texto limpo retornado pela IA.
+        palavras_originais (List[Dict]): A lista original de palavras com 'word', 'start', 'end'.
+
+    Returns:
+        list[dict]: Uma lista de intervalos de tempo permitidos.
+    """
+    # 1. Remove toda e qualquer pontuação da IA antes de separar
+    texto_sem_pontuacao_ia = texto_limpo.translate(str.maketrans('', '', string.punctuation))
+    palavras_limpas = texto_sem_pontuacao_ia.lower().split()
+
+    # 2. Remove toda e qualquer pontuação do Whisper
+    palavras_originais_lower = []
+    for p in palavras_originais:
+        palavra_limpa = p['word'].translate(str.maketrans('', '', string.punctuation)).lower().strip()
+        palavras_originais_lower.append((palavra_limpa, p))
+
+    intervalos_permitidos = []
+    idx_original = 0
+    idx_original_atual = 0  # Ponteiro oficial que rastreia a posição cronológica
+
+    for palavra_limpa in palavras_limpas:
+        encontrado = False
+        while idx_original < len(palavras_originais_lower):
+            palavra_original_texto, palavra_original_obj = palavras_originais_lower[idx_original]
+            idx_original += 1
+            
+            # Se as palavras limpas baterem, pega o tempo
+        
+        # Define a janela de busca para o ponteiro explorador
+        limite_busca = min(idx_original_atual + 15, len(palavras_originais_lower))
+
+        # O ponteiro explorador 'busca_idx' procura dentro da janela
+        for busca_idx in range(idx_original_atual, limite_busca):
+            palavra_original_texto, palavra_original_obj = palavras_originais_lower[busca_idx]
+
+            # Se as palavras limpas baterem, o match é encontrado
+            if palavra_original_texto == palavra_limpa:
+                intervalos_permitidos.append({
+                    "start": palavra_original_obj['start'],
+                    "end": palavra_original_obj['end']
+                })
+                encontrado = True
+                # Atualiza o ponteiro oficial para a posição logo após a palavra encontrada
+                idx_original_atual = busca_idx + 1
+                break
+                
+
+        # Se, após varrer a janela, a palavra não for encontrada, avisa e continua.
+        # O ponteiro oficial não é alterado, permitindo a recuperação na próxima palavra.
+        if not encontrado:
+            print(f"[ALINHAMENTO] AVISO: A palavra '{palavra_limpa}' do texto da IA não foi encontrada na transcrição original.")
+
+    return intervalos_permitidos
