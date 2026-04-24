@@ -29,15 +29,16 @@ def refinar_transcricao_com_ia(texto_completo: str) -> str | None:
         mensagens = [
             {
                 "role": "system",
-                "content": """Você é um 'Revisor de Texto de Transcrição'. Sua única função é revisar o texto fornecido e DELETAR trechos que sejam claramente gaguejos, hesitações, palavras repetidas por engano ou erros de gravação.
-                
-REGRA NÚMERO UM (INQUEBRÁVEL): NÃO altere, reescreva, corrija a gramática ou adicione NENHUMA palavra. Apenas delete.
+                "content": """Você é um 'Diretor de Edição de Vídeo'. 
+                Sua função é receber a transcrição bruta e DELETAR partes inúteis. 
+                REGRA 1: Apenas DELETE. Nunca altere ou adicione palavras. 
+                REGRA 2: PRESERVE perguntas, introduções e a voz do entrevistador (Ex: 'Quem é você?', 'Como funciona isso?'). Elas são vitais para o contexto. 
+                REGRA 3: O QUE DELETAR: Lixo técnico de gravação (Ex: 'Tá valendo?', 'Gravando', 'Corta'). Despedidas inúteis (Ex: 'Valeu, tchau'). Gaguejos e hesitações (Ex: 'uhm', 'ééé'). Repetições de raciocínio (Ex: transformar 'A inteligência... a inteligência é boa' em 'A inteligência é boa'). 
+                --- EXEMPLO DE COMO VOCÊ DEVE AGIR ---
+                TRANSCRIÇÃO BRUTA: "Tá valendo? O que você faz? Bom, eu... eu trabalho com marketing. Valeu, obrigado."
+                TEXTO LIMPO: "O que você faz? Bom, eu trabalho com marketing."
 
-Exemplo:
-Texto de entrada: "Eu, uhm... eu acho que... que a gente pode, pode começar."
-Sua saída DEVE SER: "Eu acho que a gente pode começar."
-
-Retorne APENAS o texto limpo como uma string contínua."""
+                Retorne APENAS o texto limpo."""
             },
             {
                 "role": "user",
@@ -55,6 +56,7 @@ Retorne APENAS o texto limpo como uma string contínua."""
         )
 
         texto_limpo = completion.choices[0].message.content
+        print(texto_limpo)
         print(f"[IA] Texto limpo recebido: \"{texto_limpo[:100]}...\"")
 
         return texto_limpo
@@ -290,14 +292,25 @@ def alinhar_texto_com_palavras(texto_limpo: str, palavras_originais: List[Dict])
             # Se as palavras limpas baterem, pega o tempo
         
         # Define a janela de busca para o ponteiro explorador
-        limite_busca = min(idx_original_atual + 15, len(palavras_originais_lower))
+        # Aumenta a janela para 150 palavras, permitindo que a IA delete grandes blocos de gagueira sem que o algoritmo perca a referência da próxima palavra válida.
+        limite_busca = min(idx_original_atual + 150, len(palavras_originais_lower))
 
         # O ponteiro explorador 'busca_idx' procura dentro da janela
         for busca_idx in range(idx_original_atual, limite_busca):
             palavra_original_texto, palavra_original_obj = palavras_originais_lower[busca_idx]
 
-            # Se as palavras limpas baterem, o match é encontrado
+            match = False
+            # 1. Match Exato (seguro para qualquer tamanho, inclusive letras soltas como 'e', 'o', 'a')
             if palavra_original_texto == palavra_limpa:
+                match = True
+            # 2. Fuzzy Match: Só permite 'startswith' se a palavra original do Whisper tiver pelo menos 3 letras.
+            # Isso salva palavras truncadas como 'voc' (você) ou 'neg' (negócios), mas impede que 'e' dê match com 'enxerga'.
+            elif len(palavra_original_texto) >= 3 and palavra_limpa.startswith(palavra_original_texto):
+                match = True
+            elif len(palavra_limpa) >= 3 and palavra_original_texto.startswith(palavra_limpa):
+                match = True
+
+            if match:
                 intervalos_permitidos.append({
                     "start": palavra_original_obj['start'],
                     "end": palavra_original_obj['end']
@@ -306,7 +319,6 @@ def alinhar_texto_com_palavras(texto_limpo: str, palavras_originais: List[Dict])
                 # Atualiza o ponteiro oficial para a posição logo após a palavra encontrada
                 idx_original_atual = busca_idx + 1
                 break
-                
 
         # Se, após varrer a janela, a palavra não for encontrada, avisa e continua.
         # O ponteiro oficial não é alterado, permitindo a recuperação na próxima palavra.
