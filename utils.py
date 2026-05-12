@@ -2,6 +2,7 @@ import subprocess
 import re
 import os
 import shutil
+import time
 
 def run_ffmpeg_command(cmd: list, capture_output=True, text=True):
     """
@@ -45,6 +46,42 @@ def get_video_duration(video_path: str, ffprobe_path: str) -> float:
     result = run_ffmpeg_command(cmd)
     duration = float(result.stdout.strip())
     return duration
+
+def aguardar_arquivo_estabilizar(filepath: str, check_interval: int = 2, timeout: int = 120) -> bool:
+    """
+    Aguarda até que o tamanho de um arquivo pare de mudar, indicando que a escrita terminou.
+
+    Args:
+        filepath (str): Caminho para o arquivo.
+        check_interval (int): Intervalo em segundos entre as verificações.
+        timeout (int): Tempo máximo em segundos para aguardar.
+
+    Returns:
+        bool: True se o arquivo estabilizou, False se o tempo limite foi atingido.
+    """
+    start_time = time.time()
+    last_size = -1
+
+    print(f"[ESTABILIZANDO] Monitorando '{os.path.basename(filepath)}' para estabilização...")
+    while time.time() - start_time < timeout:
+        try:
+            if not os.path.exists(filepath):
+                time.sleep(check_interval)
+                continue
+
+            current_size = os.path.getsize(filepath)
+            if current_size > 0 and current_size == last_size:
+                print(f"[ESTABILIZANDO] Arquivo '{os.path.basename(filepath)}' estável com {current_size} bytes.")
+                return True
+            
+            last_size = current_size
+            time.sleep(check_interval)
+        except FileNotFoundError:
+            time.sleep(check_interval)
+            continue
+
+    print(f"[ESTABILIZANDO] ERRO: Tempo limite de {timeout}s atingido ao aguardar a estabilização de '{filepath}'.")
+    return False
 
 def check_ffmpeg_paths(ffmpeg_path: str, ffprobe_path: str):
     """

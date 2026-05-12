@@ -5,23 +5,28 @@ dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 load_dotenv(dotenv_path=dotenv_path)
 
 import time
+import queue
+import concurrent.futures
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import transcribe
 import process
 import video_editor
 import subtitles
-from utils import run_ffmpeg_command, get_video_duration, check_ffmpeg_paths
+from utils import run_ffmpeg_command, get_video_duration, check_ffmpeg_paths, aguardar_arquivo_estabilizar
 
 VIDEO_EXTENSIONS = ('.mp4', '.mov', '.avi', '.mkv')
 
+# Fila para o padrão Produtor-Consumidor
+video_queue = queue.Queue()
+
 
 class VideoHandler(FileSystemEventHandler):
-    def __init__(self, ffmpeg_path: str, ffprobe_path: str):
+    """Produtor: Detecta novos vídeos e os adiciona a uma fila de processamento."""
+    def __init__(self, processing_queue: queue.Queue):
         super().__init__()
-        self.ffmpeg_path = ffmpeg_path
-        self.ffprobe_path = ffprobe_path
-        print("[HANDLER INICIADO] Caminhos do FFmpeg configurados.")
+        self.queue = processing_queue
+        print("[PRODUTOR] Handler do Watchdog iniciado.")
 
     def on_created(self, event):
         if event.is_directory:
@@ -30,13 +35,8 @@ class VideoHandler(FileSystemEventHandler):
         filepath = event.src_path
 
         if filepath.lower().endswith(VIDEO_EXTENSIONS):
-            print(f"[NOVO VÍDEO DETECTADO] {filepath}")
-
-            # Pausa para garantir que o arquivo foi completamente copiado.
-            # Uma abordagem mais robusta poderia verificar a estabilidade do tamanho do arquivo.
-            time.sleep(2)
-            # Passa os caminhos dos executáveis para a função de processamento
-            process_video(filepath, self.ffmpeg_path, self.ffprobe_path)
+            print(f"[PRODUTOR] Novo vídeo detectado: {os.path.basename(filepath)}. Adicionando à fila.")
+            self.queue.put(filepath)
 
 
 def extrair_audio(caminho_video: str, caminho_saida_audio: str, ffmpeg_path: str):
@@ -76,9 +76,8 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
     
     # Define os caminhos dos arquivos temporários e finais
     caminho_audio_temp = os.path.join("temp", f"{nome_base}.mp3")
-    caminho_video_editado_temp = os.path.join("temp", f"{nome_base}_editado.mp4")
     caminho_ass_temp = os.path.join("temp", f"{nome_base}.ass")
-    caminho_video_final_output = os.path.join("output_videos", f"{nome_base}_final.mp4")
+    caminho_video_final = os.path.join("output_videos", f"{nome_base}_final.mp4")
 
     # Etapa 0: Obter duração total do vídeo
     video_duration = get_video_duration(filepath, ffprobe_path)
@@ -165,39 +164,32 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
             print("[AVISO] Nenhum segmento válido encontrado para edição após cruzar dados da IA e silêncio. Abortando.")
             return
 
-        # Etapa 7: Edição e Concatenação (gera vídeo temporário)
-        sucesso_edicao = video_editor.cortar_e_concatenar(
-            caminho_video_original=filepath,
-            segmentos_finais=segmentos_finais_para_corte,
-            caminho_saida=caminho_video_editado_temp,
-            ffmpeg_path=ffmpeg_path
-        )
-
-        if not sucesso_edicao:
-            print("[ERRO] Falha na etapa de edição do vídeo. Abortando.")
-            return
-
-        # Etapa 8: Geração de Legendas (.ass)
+        # Etapa 7: Geração de Legendas (.ass) - Agora ANTES da edição do vídeo
         subtitles.gerar_ass(
             lista_palavras_transcritas=palavras_filtradas, # Usa as palavras já filtradas pela IA
             segmentos_finais=segmentos_finais_para_corte,
             caminho_ass=caminho_ass_temp
         )
 
-        # Etapa 9: Embutir Legendas no Vídeo (Hardcode)
-        subtitles.embutir_legendas(
-            caminho_video_temp=caminho_video_editado_temp,
+        # Etapa 8: Edição e Legendagem em Passo Único (Single-Pass Encoding)
+        sucesso_final = video_editor.editar_e_legendar_em_passo_unico(
+            caminho_video_original=filepath,
+            segmentos_finais=segmentos_finais_para_corte,
             caminho_ass=caminho_ass_temp,
-            caminho_video_final=caminho_video_final_output,
+            caminho_saida=caminho_video_final,
             ffmpeg_path=ffmpeg_path
         )
+
+        if not sucesso_final:
+            print("[ERRO] Falha na etapa de edição e legendagem do vídeo. Abortando.")
+            return
 
     except Exception as e:
         print(f"Ocorreu um erro inesperado ao processar {filepath}: {e}")
     finally:
-        # Etapa 10: Limpeza de arquivos temporários
+        # Etapa Final: Limpeza de arquivos temporários
         print("[LIMPEZA] Removendo arquivos temporários...")
-        arquivos_para_limpar = [caminho_audio_temp, caminho_video_editado_temp, caminho_ass_temp]
+        arquivos_para_limpar = [caminho_audio_temp, caminho_ass_temp]
         for arquivo in arquivos_para_limpar:
             try:
                 if os.path.exists(arquivo):
@@ -206,8 +198,33 @@ def process_video(filepath: str, ffmpeg_path: str, ffprobe_path: str):
             except OSError as e:
                 print(f" - Erro ao remover {arquivo}: {e}")
 
-def start_watchdog(path: str, ffmpeg_path: str, ffprobe_path: str):
-    event_handler = VideoHandler(ffmpeg_path=ffmpeg_path, ffprobe_path=ffprobe_path)
+def consumer_worker(processing_queue: queue.Queue, ffmpeg_path: str, ffprobe_path: str):
+    """Consumidor: Pega vídeos da fila e os processa um por um."""
+    print("[CONSUMIDOR] Worker iniciado. Aguardando vídeos na fila...")
+    while True:
+        try:
+            filepath = processing_queue.get()
+            print(f"\n[CONSUMIDOR] Pegou '{os.path.basename(filepath)}' da fila para processar.")
+
+            # PASSO 1: Aguarda o arquivo estabilizar antes de qualquer coisa
+            if aguardar_arquivo_estabilizar(filepath):
+                print(f"[CONSUMIDOR] Arquivo '{os.path.basename(filepath)}' estabilizado. Iniciando processamento.")
+                process_video(filepath, ffmpeg_path, ffprobe_path)
+            else:
+                print(f"[CONSUMIDOR] Falha ao estabilizar o arquivo '{os.path.basename(filepath)}'. Pulando.")
+            
+            processing_queue.task_done()
+        except Exception as e:
+            print(f"[CONSUMIDOR] Erro inesperado no worker: {e}")
+
+def start_processing_system(path: str, ffmpeg_path: str, ffprobe_path: str):
+    """Inicia o sistema de produtor (watchdog) e consumidor (worker)."""
+    # Inicia o worker consumidor em uma thread separada com no máximo 1 worker
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    executor.submit(consumer_worker, video_queue, ffmpeg_path, ffprobe_path)
+
+    # Inicia o produtor (watchdog) na thread principal
+    event_handler = VideoHandler(processing_queue=video_queue)
     observer = Observer()
     observer.schedule(event_handler, path=path, recursive=False)
 
@@ -218,10 +235,12 @@ def start_watchdog(path: str, ffmpeg_path: str, ffprobe_path: str):
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
+        print("\n[SISTEMA] Interrupção recebida. Encerrando...")
         observer.stop()
-        print("[PARADO] Watchdog encerrado.")
 
     observer.join()
+    executor.shutdown(wait=False, cancel_futures=True) # Encerra o executor
+    print("[SISTEMA] Encerrado.")
 
 
 if __name__ == "__main__":
@@ -236,5 +255,5 @@ if __name__ == "__main__":
     # Verificação inicial para garantir que o FFmpeg está configurado corretamente
     check_ffmpeg_paths(ffmpeg_path=FFMPEG_PATH, ffprobe_path=FFPROBE_PATH)
     
-    # Inicia o monitoramento da pasta, passando os caminhos para o handler
-    start_watchdog(path="input_videos", ffmpeg_path=FFMPEG_PATH, ffprobe_path=FFPROBE_PATH)
+    # Inicia o sistema de monitoramento e processamento
+    start_processing_system(path="input_videos", ffmpeg_path=FFMPEG_PATH, ffprobe_path=FFPROBE_PATH)

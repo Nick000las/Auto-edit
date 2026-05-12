@@ -185,30 +185,3 @@ def gerar_ass(lista_palavras_transcritas: list[dict], segmentos_finais: list[dic
         f.write("\n".join(ass_content))
     
     print(f"[ASS] Arquivo de legendas salvo em: {caminho_ass}")
-
-def embutir_legendas(caminho_video_temp: str, caminho_ass: str, caminho_video_final: str, ffmpeg_path: str):
-    """
-    Embute (hardcode) um arquivo de legendas .srt em um vídeo usando FFmpeg.
-
-    Args:
-        caminho_video_temp (str): Caminho para o vídeo de entrada (editado, sem legendas).
-        caminho_srt (str): Caminho para o arquivo .srt.
-        caminho_video_final (str): Caminho para salvar o vídeo final com legendas.
-        ffmpeg_path (str): Caminho para o executável do FFmpeg.
-    """
-    print("[FFMPEG] Embutindo legendas no vídeo final...")
-    
-    # FFmpeg no Windows requer que as barras invertidas e os dois pontos sejam escapados no filtro
-    caminho_ass_escapado = caminho_ass.replace('\\', '/').replace(':', '\\:')
-
-    cmd = [
-        ffmpeg_path,
-        '-i', caminho_video_temp,
-        '-vf', f"subtitles='{caminho_ass_escapado}'",
-        '-c:a', 'copy', # Copia o áudio sem re-codificar
-        '-y',
-        caminho_video_final
-    ]
-
-    run_ffmpeg_command(cmd)
-    print(f"[SUCESSO] Vídeo final com legendas embutidas salvo em: {caminho_video_final}")
