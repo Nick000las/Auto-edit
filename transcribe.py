@@ -31,7 +31,7 @@ def transcrever_com_whisper(caminho_audio):
                 language='pt',                        # Força o modelo a usar a rede neural em português
                 timestamp_granularities=["word"],     # Divide o texto em palavras com timestamps
                 temperature=0.0,                      # Força o modelo a ser determinístico
-                prompt="Este é um vídeo em português do Brasil. Transcreva as palavras completas, sem abreviações. Exemplo: não, preço, caráter, inteligência." # Contexto para ancorar o modelo
+                prompt="Olá. Vamos falar sobre: não, preço, caráter, inteligência. Tudo bem?"
             )
             
 

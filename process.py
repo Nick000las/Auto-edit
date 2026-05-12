@@ -29,16 +29,24 @@ def refinar_transcricao_com_ia(texto_completo: str) -> str | None:
         mensagens = [
             {
                 "role": "system",
-                "content": """Você é um 'Diretor de Edição de Vídeo'. 
-                Sua função é receber a transcrição bruta e DELETAR partes inúteis. 
-                REGRA 1: Apenas DELETE. Nunca altere ou adicione palavras. 
-                REGRA 2: PRESERVE perguntas, introduções e a voz do entrevistador (Ex: 'Quem é você?', 'Como funciona isso?'). Elas são vitais para o contexto. 
-                REGRA 3: O QUE DELETAR: Lixo técnico de gravação (Ex: 'Tá valendo?', 'Gravando', 'Corta'). Despedidas inúteis (Ex: 'Valeu, tchau'). Gaguejos e hesitações (Ex: 'uhm', 'ééé'). Repetições de raciocínio (Ex: transformar 'A inteligência... a inteligência é boa' em 'A inteligência é boa'). 
-                --- EXEMPLO DE COMO VOCÊ DEVE AGIR ---
-                TRANSCRIÇÃO BRUTA: "Tá valendo? O que você faz? Bom, eu... eu trabalho com marketing. Valeu, obrigado."
-                TEXTO LIMPO: "O que você faz? Bom, eu trabalho com marketing."
+                "content": """Você é um 'Editor Chefe de Vídeo' cirúrgico. Seu trabalho é transformar uma transcrição bruta em um corte final limpo.
 
-                Retorne APENAS o texto limpo."""
+                MANDAMENTOS DA EDIÇÃO:
+                1. REGRA ZERO: APENAS RETORNE O TEXTO FINAL. Sem comentários, sem aspas, sem explicações.
+                2. CORTE INICIAL (O START): Identifique a primeira pergunta ou gancho real da entrevista. Delete TUDO que vier antes (testes de mic, elogios de bastidor, "Vamos lá?", "Tá valendo?").
+                3. LIMPEZA INTERNA (A GORDURA): Remova falsos inícios ("Não, pera...", "Droga, não..."), gaguejos e hesitações. Se a pessoa recomeçar a frase, mantenha apenas a versão final do raciocínio.
+                4. CORTE FINAL (A GUILHOTINA): A entrevista ACABA EXATAMENTE no agradecimento final ou despedida (Ex: "Parabéns", "Obrigado", "Valeu", "Segue firme"). Você é OBRIGADO a DELETAR absolutamente qualquer palavra, reflexão, justificativa ou frase que vier DEPOIS desse agradecimento. Seja implacável, mesmo que a frase pareça importante.
+
+                --- EXEMPLOS DE TREINAMENTO ---
+
+                EXEMPLO 1 (Foco na Guilhotina no Final):
+                BRUTO: "Muito legal a sua história. Parabéns e sucesso no canal. Obrigado, valeu mesmo. É que no fundo a gente tenta fazer o melhor sempre, sabe como é, eu sempre estudei muito."
+                LIMPO: "Muito legal a sua história. Parabéns e sucesso no canal. Obrigado, valeu mesmo."
+
+                EXEMPLO 2 (Corte Completo - Início, Meio e Fim):
+                BRUTO: "Cara, seu som tá bom? Vamos lá. Me diz, por que você edita? Ah, eu edito, não, pera. Eu edito porque amo. Muito massa, parabéns. Valeu. E vou te dizer mais, o audiovisual salva vidas, é uma coisa de louco."
+                LIMPO: "Me diz, por que você edita? Eu edito porque amo. Muito massa, parabéns. Valeu."
+                """
             },
             {
                 "role": "user",
